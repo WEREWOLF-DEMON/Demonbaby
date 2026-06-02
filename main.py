@@ -261,45 +261,58 @@ async def stop_process(attack_id: Optional[str] = None):
 
 @app.get("/check")
 async def check_system():
-    """Diagnostic endpoint to verify binary and permissions."""
-    results = {
-        "binary_path": BINARY_PATH,
-        "binary_exists": os.path.isfile(BINARY_PATH),
-        "binary_executable": False,
-        "binary_permissions": None,
-        "working_directory": os.getcwd(),
-        "files_in_cwd": os.listdir(".") if os.path.exists(".") else [],
-        "environment": {
-            "PATH": os.environ.get("PATH", ""),
-            "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
-        }
-    }
-    
-    if results["binary_exists"]:
-        st = os.stat(BINARY_PATH)
-        results["binary_executable"] = bool(st.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))
-        results["binary_permissions"] = oct(st.st_mode)[-3:]
-    
-    # Try to run a simple version check (if binary supports --help or --version)
-    if results["binary_exists"] and results["binary_executable"]:
+    try:
+        binary_exists = os.path.isfile(BINARY_PATH)
+        binary_executable = False
+        binary_perms = None
+        
+        if binary_exists:
+            st = os.stat(BINARY_PATH)
+            binary_executable = bool(st.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))
+            binary_perms = oct(st.st_mode)[-3:]
+        
+        # List files in current directory
         try:
-            proc = await asyncio.create_subprocess_exec(
-                BINARY_PATH, "--help",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=2)
-            results["test_run"] = {
-                "returncode": proc.returncode,
-                "stdout": stdout.decode(errors="replace")[:200],
-                "stderr": stderr.decode(errors="replace")[:200]
-            }
-        except Exception as e:
-            results["test_run"] = {"error": str(e)}
-    else:
-        results["test_run"] = {"skipped": "binary missing or not executable"}
-    
-    return results
+            files = os.listdir(".")
+        except:
+            files = []
+        
+        result = {
+            "binary_path": BINARY_PATH,
+            "binary_exists": binary_exists,
+            "binary_executable": binary_executable,
+            "binary_permissions": binary_perms,
+            "working_directory": os.getcwd(),
+            "files_in_cwd": files[:20],  # limit to 20
+            "max_concurrent": MAX_CONCURRENT_ATTACKS,
+            "active_attacks": len(pm.attacks)
+        }
+        
+        # Optional: try to run binary with --help (non-blocking, short timeout)
+        if binary_exists and binary_executable:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    BINARY_PATH, "--help",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+                result["test_run"] = {
+                    "returncode": proc.returncode,
+                    "stdout": stdout.decode(errors="replace")[:100],
+                    "stderr": stderr.decode(errors="replace")[:100]
+                }
+            except asyncio.TimeoutError:
+                result["test_run"] = {"error": "Timeout (binary hung)"}
+            except Exception as e:
+                result["test_run"] = {"error": str(e)}
+        else:
+            result["test_run"] = "Binary missing or not executable"
+        
+        return result
+    except Exception as e:
+        # Return error details as JSON instead of crashing
+        return {"error": str(e), "type": type(e).__name__}
 
 if __name__ == "__main__":
     uvicorn.run(app, host=API_HOST, port=API_PORT, log_level=LOG_LEVEL.lower())
