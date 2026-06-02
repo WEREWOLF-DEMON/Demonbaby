@@ -150,5 +150,27 @@ async def debug():
         "demon_executable": os.access("./demon", os.X_OK)
     }
 
+
+@app.get("/test_demon")
+async def test_demon():
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["./demon"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        return {
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
+
 if __name__ == "__main__":
     uvicorn.run(app, host=API_HOST, port=API_PORT)
