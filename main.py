@@ -23,7 +23,7 @@ BINARY_PATH = os.getenv("DEMON_BINARY", "./demon")
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8000"))
 MAX_CONCURRENT_ATTACKS = int(os.getenv("MAX_CONCURRENT_ATTACKS", "5"))
-RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "20"))
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "1"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # Validate binary exists and is executable at startup
