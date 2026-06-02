@@ -140,5 +140,15 @@ async def stop_process():
     return {"success": True, "message": "Process stopped"}
 
 
+@app.get("/debug")
+async def debug():
+    import os
+    return {
+        "cwd": os.getcwd(),
+        "files": os.listdir("."),
+        "demon_exists": os.path.exists("./demon"),
+        "demon_executable": os.access("./demon", os.X_OK)
+    }
+
 if __name__ == "__main__":
     uvicorn.run(app, host=API_HOST, port=API_PORT)
