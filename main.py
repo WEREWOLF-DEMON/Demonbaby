@@ -3,6 +3,7 @@ import signal
 import asyncio
 import subprocess
 from datetime import datetime
+from typing import Optional
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -30,29 +31,6 @@ class ProcessStart(BaseModel):
     threads: int = Field(300, ge=1, le=1000, description="Number of threads (1-1000)")
 
 
-class ProcessResponse(BaseModel):
-    success: bool
-    message: str
-    pid: int = None
-    target: str = None
-    port: int = None
-    time: int = None
-    size: int = None
-    threads: int = None
-
-
-class StatusResponse(BaseModel):
-    running: bool
-    pid: int = None
-    target: str = None
-    port: int = None
-    time: int = None
-    size: int = None
-    threads: int = None
-    elapsed: int = None
-    remaining: int = None
-
-
 # ═══════════════════════════════════════
 # PROCESS MANAGER
 # ═══════════════════════════════════════
@@ -72,7 +50,6 @@ class ProcessManager:
         if self.is_running():
             raise HTTPException(status_code=409, detail="Process already running. Stop it first.")
 
-        # Binary expects: ./demon [IP] [PORT] [TIME] [SIZE] [THREADS]
         cmd = [BINARY_PATH, ip, str(port), str(time), str(size), str(threads)]
 
         try:
@@ -87,20 +64,18 @@ class ProcessManager:
         except PermissionError:
             raise HTTPException(status_code=500, detail=f"Binary not executable. Run: chmod +x {BINARY_PATH}")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to start process: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to start: {str(e)}")
 
         # Check if process started successfully
         try:
             self.process.wait(timeout=0.5)
-            # If wait returns, process exited immediately - likely wrong args
             exit_code = self.process.returncode
             self.process = None
             raise HTTPException(
                 status_code=400,
-                detail=f"Binary exited immediately with code {exit_code}. Check arguments: {cmd}"
+                detail=f"Binary exited immediately (code {exit_code}). Check arguments."
             )
         except subprocess.TimeoutExpired:
-            # Process is still running - this is good
             pass
 
         self.start_time = datetime.utcnow()
@@ -111,7 +86,6 @@ class ProcessManager:
         self.thread_count = threads
         self.pid = self.process.pid
 
-        # Auto-stop after duration
         if time > 0:
             self.monitor_task = asyncio.create_task(self._auto_stop(time))
 
@@ -144,6 +118,143 @@ class ProcessManager:
         self.process = None
         self.start_time = None
         self.pid = None
+        return True
+
+    def is_running(self) -> bool:
+        if self.process:
+            if self.process.poll() is None:
+                return True
+            self.process = None
+            self.pid = None
+            self.start_time = None
+        return False
+
+    def status(self) -> dict:
+        running = self.is_running()
+        
+        if running:
+            elapsed = int((datetime.utcnow() - self.start_time).total_seconds())
+            remaining = max(0, self.duration - elapsed)
+            return {
+                "running": True,
+                "pid": self.pid,
+                "target": self.target_ip,
+                "port": self.target_port,
+                "time": self.duration,
+                "size": self.packet_size,
+                "threads": self.thread_count,
+                "elapsed": elapsed,
+                "remaining": remaining
+            }
+        else:
+            return {
+                "running": False,
+                "pid": 0,
+                "target": "",
+                "port": 0,
+                "time": 0,
+                "size": 0,
+                "threads": 0,
+                "elapsed": 0,
+                "remaining": 0
+            }
+
+
+pm = ProcessManager()
+
+
+# ═══════════════════════════════════════
+# FASTAPI APP
+# ═══════════════════════════════════════
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    pm.stop()
+
+
+app = FastAPI(
+    title="Demon Process Manager",
+    version="2.0.1",
+    lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ═══════════════════════════════════════
+# ENDPOINTS
+# ═══════════════════════════════════════
+
+@app.get("/")
+async def root():
+    return {
+        "service": "Demon Process Manager",
+        "version": "2.0.1",
+        "binary": BINARY_PATH,
+        "usage": "./demon [IP] [PORT] [TIME] [SIZE] [THREADS]"
+    }
+
+
+@app.get("/status")
+async def get_status():
+    return pm.status()
+
+
+@app.post("/start")
+async def start_process(data: ProcessStart):
+    if pm.is_running():
+        raise HTTPException(
+            status_code=409,
+            detail=f"Process already running (PID: {pm.pid}). Use /stop first."
+        )
+
+    pid = pm.start(
+        ip=data.ip,
+        port=data.port,
+        time=data.time,
+        size=data.size,
+        threads=data.threads
+    )
+
+    return {
+        "success": True,
+        "message": f"Process started (PID: {pid})",
+        "pid": pid,
+        "target": data.ip,
+        "port": data.port,
+        "time": data.time,
+        "size": data.size,
+        "threads": data.threads
+    }
+
+
+@app.post("/stop")
+async def stop_process():
+    if not pm.is_running():
+        raise HTTPException(status_code=404, detail="No process running")
+
+    pm.stop()
+    return {
+        "success": True,
+        "message": "Process stopped"
+    }
+
+
+# ═══════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════
+if __name__ == "__main__":
+    print("=" * 50)
+    print("Demon Process Manager v2.0.1")
+    print(f"Binary: {BINARY_PATH}")
+    print(f"API: http://{API_HOST}:{API_PORT}")
+    print("=" * 50)
+    uvicorn.run(app, host=API_HOST, port=API_PORT)        self.pid = None
         return True
 
     def is_running(self) -> bool:
